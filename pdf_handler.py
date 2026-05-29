@@ -233,7 +233,7 @@ async def process_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE, is_qbm
         for retry in range(3 if is_qbm else 2):
             try:
                 cnt = mcq_count if mcq_count and not is_qbm else (15 if not is_qbm else 20)
-                 = await
+                page_mcqs = await
                       # Cache check
 cached = await get_cached_mcqs(img_bytes)
 if cached:
