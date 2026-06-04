@@ -130,7 +130,7 @@ async def send_single_poll(bot, chat_id: int, mcq: dict, reply_to: int = None):
     # Build api_kwargs
     api_kwargs = {}
     if q_img_url:
-        api_kwargs["question_media"] = {"type": "photo", "media": q_img_url}
+        api_kwargs["media"] = {"type": "photo", "media": q_img_url}
     if has_opt_image:
         api_kwargs["options"] = api_options
     if exp_img_url:
