@@ -1,3 +1,5 @@
+from nonblock import nonblocking
+from nonblock import nonblocking
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """ATLAS BOT - CSV to Poll Handler (/csv, /csvS, /csvI, /csvIS) - FULLY FIXED"""
@@ -161,6 +163,8 @@ async def get_message_link(bot, chat_id: int, message_id: int) -> str:
     except: return ""
 
 # ============ /csv HANDLER ============
+@nonblocking
+@nonblocking
 async def csv_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     is_admin = await db.fetchone('SELECT 1 FROM admins WHERE user_id = ?', (user_id,))
@@ -186,6 +190,7 @@ async def csv_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ {len(mcqs)} MCQ | 🔥 {topic or 'N/A'}\n\nSelect Channel:", reply_markup=InlineKeyboardMarkup(buttons))
 
 # ============ /csvS HANDLER ============
+@nonblocking
 async def csvs_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     is_admin = await db.fetchone('SELECT 1 FROM admins WHERE user_id = ?', (user_id,))

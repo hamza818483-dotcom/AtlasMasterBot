@@ -70,7 +70,7 @@ def upload_image_to_imgbb(b64_str: str) -> str:
 # ============================================================
 # AGGRESSIVE TEXT CLEANING
 # ============================================================
-def clean_html_text(text: str) -> str:
+def aggressive_clean(text: str) -> str:
     """Clean text with formula fixes"""
     if not text:
         return ""
@@ -204,7 +204,7 @@ def format_html_element(element, img_map: dict) -> str:
     raw_text = re.sub(r'IMGSTART.*?IMGEND', img_repl, raw_text)
     
     # Clean text
-    cleaned = clean_html_text(raw_text)
+    cleaned = aggressive_clean(raw_text)
     
     # Restore image markers as HTML img tags
     for i, marker in enumerate(img_markers):
@@ -219,7 +219,7 @@ def format_html_element(element, img_map: dict) -> str:
 # ============================================================
 # PARSE MHTML FILE (Extract HTML + Embedded Images)
 # ============================================================
-def parse_mhtml_to_parts(file_bytes: bytes, filename: str) -> tuple:
+def parse_mhtml_old_to_parts(file_bytes: bytes, filename: str) -> tuple:
     """
     Parse MHTML or HTML file and return:
     - html_body: the HTML content
@@ -643,3 +643,96 @@ async def update_mhtml_dashboard(msg, data: dict):
 ╚══════════════════════════════════╝"""
     try: await msg.edit_text(f"```{dashboard}```", parse_mode='Markdown')
     except: await msg.edit_text(dashboard)
+
+# ============================================================
+# ENHANCED MHTML PROCESSING (from ATLAS Ultimate)
+# ============================================================
+
+def convert_to_english_numbers(text):
+    return text.translate(str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789"))
+
+def aggressive_clean(text):
+    """Advanced formula & text cleaning"""
+    if not text: return ""
+    text = convert_to_english_numbers(text)
+    text = re.sub(r'\\frac\s*\{([^}]+)\}\s*\{([^}]+)\}', r'\1/\2', text)
+    text = re.sub(r'_\{\s*([^}]+)\s*\}', r'_\1', text)
+    text = re.sub(r'\^\{\s*([^}]+)\s*\}', r'^\1', text)
+    text = re.sub(r'[\{\}]', '', text)
+    text = re.sub(r'\\[a-zA-Z]+\s*\{?', ' ', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+def format_content(element, img_map):
+    """Extract formatted content with images from HTML element"""
+    if not element: return ""
+    for hidden in element.find_all(['annotation', 'script', 'mjx-assistive-mathml']):
+        hidden.decompose()
+    for img in element.find_all('img'):
+        src = img.get('src', '') or img.get('data-src', '')
+        if src:
+            img.replace_with(f" <img src='{src}'> ")
+    raw_text = element.get_text(separator=" ", strip=True)
+    return aggressive_clean(raw_text)
+
+def parse_chorcha(soup, img_map):
+    """Parse Chorcha.net format"""
+    cards = soup.find_all('div', class_=lambda x: x and 'p-5' in x and 'rounded-xl' in x)
+    results = []
+    for card in cards:
+        q_div = card.find('div', class_=lambda x: x and 'font-medium' in x)
+        if not q_div: continue
+        q_text = re.sub(r'^\s*[0-9০-৯]+\s*[\.\)\-ঃ:]\s*', '', format_content(q_div, img_map))
+        options = []
+        ans_idx = "1"
+        for i, btn in enumerate(card.find_all('button', class_=lambda x: x and 'p-2' in x), 1):
+            opt_content = btn.find('div', class_='flex-1')
+            if opt_content:
+                options.append(format_content(opt_content, img_map))
+                if any(c in str(btn) for c in ['#017A47', 'border-[#017A47]', '#E2A03F', '#F59E0B']):
+                    ans_idx = str(i)
+        while len(options) < 4: options.append("")
+        exp_div = card.find('div', class_=lambda x: x and 'prose' in x)
+        exp_text = format_content(exp_div, img_map) if exp_div else ""
+        results.append({
+            "questions": q_text,
+            "option1": options[0] if len(options) > 0 else "",
+            "option2": options[1] if len(options) > 1 else "",
+            "option3": options[2] if len(options) > 2 else "",
+            "option4": options[3] if len(options) > 3 else "",
+            "answer": ans_idx,
+            "explanation": exp_text,
+            "type": 1, "section": 1
+        })
+    return results
+
+def parse_testmoz(soup, img_map):
+    """Parse TestMoz format"""
+    cards = soup.find_all('div', class_=lambda x: x and 'rounded-lg' in x and 'shadow-md' in x)
+    results = []
+    for card in cards:
+        q_p = card.find('p', class_='text-[17px]')
+        q_text = re.sub(r'^\s*[0-9০-৯]+\s*[\.\)\-ঃ:]\s*', '', format_content(q_p, img_map)) if q_p else ""
+        opt_divs = card.find_all('div', class_=lambda x: x and 'cursor-pointer' in x and 'col-span-2' in x)
+        options = []
+        ans_idx = "1"
+        for i, opt in enumerate(opt_divs, 1):
+            text_sm = opt.find('div', class_='text-sm')
+            opt_text = format_content(text_sm, img_map) if text_sm else ""
+            options.append(opt_text)
+            if opt.find('div', class_=lambda x: x and 'bg-green-500' in x) or opt.find('svg'):
+                ans_idx = str(i)
+        while len(options) < 4: options.append("")
+        exp_div = card.find('div', class_=lambda x: x and 'col-span-2' in x and 'font-semibold' in x)
+        exp_text = format_content(exp_div, img_map) if exp_div else ""
+        results.append({
+            "questions": q_text,
+            "option1": options[0] if len(options) > 0 else "",
+            "option2": options[1] if len(options) > 1 else "",
+            "option3": options[2] if len(options) > 2 else "",
+            "option4": options[3] if len(options) > 3 else "",
+            "answer": ans_idx,
+            "explanation": exp_text,
+            "type": 1, "section": 1
+        })
+    return results
