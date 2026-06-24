@@ -317,8 +317,8 @@ def main():
     # Build application
     app = Application.builder() \
     .token(Config.BOT_TOKEN) \
-    .base_url("https://tg-proxy.hamza818483.workers.dev/bot") \
-    .base_file_url("https://tg-proxy.hamza818483.workers.dev/file/bot") \
+    .base_url("https://atlasmaster-proxy-pages.pages.dev/bot") \
+    .base_file_url("https://atlasmaster-proxy-pages.pages.dev/file/bot") \
     .post_init(post_init) \
     .connect_timeout(60) \
     .read_timeout(60) \
