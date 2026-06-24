@@ -1,6 +1,7 @@
-__pycache__/
-data/
-*.pyc
+data/backup_*.db
+data/temp/*
+data/*.log
 .env
-backup.sh
-*.backup
+__pycache__/
+*.pyc
+data/atlas_bot.db

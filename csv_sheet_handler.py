@@ -7,7 +7,7 @@ from PIL import Image as PILImage
 from io import BytesIO
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from config import db
+from config import db, check_permitted
 from services import parse_csv_to_mcqs
 
 # ============================================================
@@ -258,6 +258,8 @@ def build_html(data, heading, fmt, hdr_txt="", ftr_txt=""):
 # /sheet HANDLER
 # ============================================================
 async def sheet_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_permitted(update.effective_user.id):
+        await update.message.reply_text("❌ আপনার এই feature ব্যবহারের অনুমতি নেই।"); return
     mcqs = None; filename = "practice"
     if update.message.reply_to_message and update.message.reply_to_message.document:
         doc = update.message.reply_to_message.document
@@ -270,17 +272,9 @@ async def sheet_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         csv_bytes = context.user_data['last_csv']
         mcqs = parse_csv_to_mcqs(csv_bytes.decode('utf-8-sig') if isinstance(csv_bytes, bytes) else str(csv_bytes))
         filename = context.user_data.get('last_topic', 'practice')
-    if not mcqs: await update.message.reply_text("❌ CSV ফাইলে reply করে `/sheet` দাও"); return
-    
+    if not mcqs: await update.message.reply_text("❌ CSV ফাইলে reply করে `/sheet` দাও"); return    
     context.user_data['sheet_mcqs'] = mcqs; context.user_data['sheet_filename'] = filename
-    context.user_data['sheet_selected'] = []
-    print(f"DEBUG sheet_selected: {context.user_data.get("sheet_selected")}")
-    print(f"DEBUG sheet_selected: {context.user_data.get("sheet_selected")}")
-    formats = await db.fetchall('SELECT format_id, format_name, is_active FROM sheet_formats ORDER BY format_id')
-    if not formats:
-        for fid, fname in FORMAT_NAMES.items():
-            await db.execute('INSERT OR IGNORE INTO sheet_formats (format_id, format_name, is_active) VALUES (?, ?, 1)', (fid, fname))
-        formats = [(fid, fname, 1) for fid, fname in FORMAT_NAMES.items()]
+    formats = [(fid, fname, 1) for fid, fname in FORMAT_NAMES.items()]
     buttons = []
     reading_header_added = False
     print_header_added = False
@@ -327,7 +321,7 @@ async def handle_sheet_title(update: Update, context: ContextTypes.DEFAULT_TYPE)
             with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as tmp:
                 tmp.write(html); tmp_path = tmp.name
             import subprocess
-            subprocess.run(['/data/data/com.termux/files/usr/bin/chromium-browser', '--headless', '--disable-gpu', '--no-sandbox', f'--print-to-pdf={pdf_path}', tmp_path], timeout=60, check=True)
+            subprocess.run(['/usr/bin/chromium', '--headless', '--disable-gpu', '--no-sandbox', f'--print-to-pdf={pdf_path}', tmp_path], timeout=60, check=True)
             if os.path.exists(pdf_path):
                 with open(pdf_path, 'rb') as f:
                     await update.message.reply_document(document=f.read(), filename=f"{title}_{fid}.pdf", caption=f"📄 {FORMAT_NAMES.get(fid, fid)} | 📊 {len(mcqs)} MCQ")
@@ -416,7 +410,7 @@ async def handle_sheet_title(update: Update, context: ContextTypes.DEFAULT_TYPE)
             with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as tmp:
                 tmp.write(html); tmp_path = tmp.name
             import subprocess
-            subprocess.run(['/data/data/com.termux/files/usr/bin/chromium-browser', '--headless', '--disable-gpu', '--no-sandbox', f'--print-to-pdf={pdf_path}', tmp_path], timeout=60, check=True)
+            subprocess.run(['/usr/bin/chromium', '--headless', '--disable-gpu', '--no-sandbox', f'--print-to-pdf={pdf_path}', tmp_path], timeout=60, check=True)
             if os.path.exists(pdf_path):
                 with open(pdf_path, 'rb') as f:
                     await update.message.reply_document(document=f.read(), filename=f"{title}_{fid}.pdf", caption=f"📄 {FORMAT_NAMES.get(fid, fid)} | 📊 {len(mcqs)} MCQ")

@@ -86,7 +86,7 @@ async def get_pyro_client():
     if pyro_client is None:
         api_id = os.getenv('TELEGRAM_API_ID')
         api_hash = os.getenv('TELEGRAM_API_HASH')
-        bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+        bot_token = os.getenv('BOT_TOKEN')
         if api_id and api_hash:
             pyro_client = Client("atlas_pyro", api_id=int(api_id), api_hash=api_hash, bot_token=bot_token, no_updates=True)
             await pyro_client.start()
@@ -310,18 +310,20 @@ def main():
     logger.info("🚀 ATLAS MCQ BOT v3.0 Starting...")
     
     # Check token
-    if not Config.TELEGRAM_BOT_TOKEN:
-        logger.error("❌ TELEGRAM_BOT_TOKEN not set!")
+    if not Config.BOT_TOKEN:
+        logger.error("❌ BOT_TOKEN not set!")
         sys.exit(1)
     
     # Build application
-    app = Application.builder().connect_timeout(60).read_timeout(60).write_timeout(60) \
-        .token(Config.TELEGRAM_BOT_TOKEN) \
-        .post_init(post_init) \
-        .connect_timeout(30) \
-        .read_timeout(30) \
-        .write_timeout(30) \
-        .build()
+    app = Application.builder() \
+    .token(Config.BOT_TOKEN) \
+    .base_url("https://tg-proxy.hamza818483.workers.dev/bot") \
+    .base_file_url("https://tg-proxy.hamza818483.workers.dev/file/bot") \
+    .post_init(post_init) \
+    .connect_timeout(60) \
+    .read_timeout(60) \
+    .write_timeout(60) \
+    .build()
     
     # ============================================================
     # REGISTER COMMAND HANDLERS
@@ -420,5 +422,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 

@@ -127,28 +127,45 @@ imgbb_mgr = ImgBBKeyManager()
 # ============================================================
 # GEMINI AI SERVICE
 # ============================================================
-async def generate_mcqs_from_image(image_bytes: bytes, active_prompts: List[str], 
-                                    count: int = 12) -> List[Dict]:
-    """Generate MCQs from image using active prompts"""
+async def generate_mcqs_from_image(image_bytes: bytes, active_prompts: List[str],
+                                    target_count: int = 12) -> List[Dict]:
+    """Generate MCQs from image with retry for exact count"""
     prompt_text = "\n\n".join(active_prompts)
-    full_prompt = f"""{prompt_text}
 
-{"Generate the HIGHEST POSSIBLE number of MCQs from this image. Extract every possible question from every line and fact. Maximum quantity with high quality." if count == 0 else f"Generate exactly {count} MCQs from this image. No more, no less."}
-Only use information present in the source. Do NOT create irrelevant questions.
-Follow ALL rules from the prompts above.
+    async def _call(count):
+        count_str = f"MANDATORY: Output EXACTLY {target_count} MCQ objects." if target_count > 0 else "Generate the HIGHEST POSSIBLE number of MCQs. Use EVERY line, EVERY source, EVERY box, EVERY piece of information. Follow ALL active prompts STRICTLY. Maximum quantity with high quality."
+        full_prompt = f"""{count_str}
+
+{prompt_text}
+
+Only use information from the source.
 Output ONLY valid JSON array:
 [{{"question":"...","options":{{"A":"...","B":"...","C":"...","D":"..."}},"answer":"A/B/C/D","explanation":"... (max 165 chars Bengali)"}}]"""
-    
-    response = call_gemini(full_prompt, image_bytes)
-    return parse_mcq_json(response)
+        response = await asyncio.to_thread(call_gemini, full_prompt, image_bytes)
+        return parse_mcq_json(response)
 
+    if target_count == 0:
+        return await _call(0)
+
+    all_mcqs = []
+    remaining = target_count
+    for attempt in range(3):
+        if remaining <= 0:
+            break
+        result = await _call(remaining)
+        if result:
+            all_mcqs.extend(result)
+            remaining = remaining - len(all_mcqs)
+        else:
+            break
+    return all_mcqs[:target_count] if target_count > 0 else all_mcqs
 async def generate_mcqs_from_text(text: str, active_prompts: List[str], 
-                                   count: int = 12) -> List[Dict]:
+                                   target_count: int = 12) -> List[Dict]:
     """Generate MCQs from text using active prompts"""
     prompt_text = "\n\n".join(active_prompts)
     full_prompt = f"""{prompt_text}
 
-{"Generate the HIGHEST POSSIBLE number of MCQs from this text. Use EVERY LINE as a source. Maximum quantity with high quality." if count == 0 else f"Generate exactly {count} MCQs from this text. No more, no less."}
+{"Generate the HIGHEST POSSIBLE number of MCQs from this text. Use EVERY LINE as a source. Maximum quantity with high quality." if target_count == 0 else f"CRITICAL: Generate EXACTLY {target_count} MCQs from this text. Count them." if target_count > 0 else "Generate ALL possible MCQs from this text."}
 Use EVERY LINE as source. Do NOT create irrelevant questions.
 Follow ALL rules from the prompts above.
 Output ONLY valid JSON array:
@@ -157,23 +174,41 @@ Output ONLY valid JSON array:
 TEXT:
 {text[:4000]}"""
     
-    response = call_gemini(full_prompt)
+    response = await asyncio.to_thread(call_gemini, full_prompt)
     return parse_mcq_json(response)
 
 def parse_mcq_json(response: str) -> List[Dict]:
     """Parse Gemini JSON response to MCQ list"""
+    if not response:
+        return []
     try:
+        # Try full JSON parse first
         json_match = re.search(r'\[.*\]', response, re.DOTALL)
         if json_match:
             mcqs = json.loads(json_match.group())
-            # Convert answer A/B/C/D to 1/2/3/4
             for mcq in mcqs:
                 ans = mcq.get('answer', 'A').upper()
                 mcq['answer'] = {'A': '1', 'B': '2', 'C': '3', 'D': '4'}.get(ans, '1')
             return mcqs
-    except: pass
+    except:
+        pass
+    # Fallback: extract individual MCQ objects
+    try:
+        objects = re.findall(r'\{[^{}]+\}', response, re.DOTALL)
+        mcqs = []
+        for obj in objects:
+            try:
+                mcq = json.loads(obj)
+                if 'question' in mcq and 'options' in mcq:
+                    ans = mcq.get('answer', 'A').upper()
+                    mcq['answer'] = {'A': '1', 'B': '2', 'C': '3', 'D': '4'}.get(ans, '1')
+                    mcqs.append(mcq)
+            except:
+                pass
+        return mcqs
+    except:
+        pass
     return []
-
 # ============================================================
 # CSV HELPER
 # ============================================================
@@ -239,23 +274,30 @@ class PDFProcessor:
             reader = PdfReader(pdf_path)
             return len(reader.pages)
         except: return 0
-    
+
     @staticmethod
-    def pdf_to_images(pdf_path: str, start: int = 1, end: int = 10) -> list:
-        """Convert PDF pages to images using pdf2image"""
+    async def pdf_to_images(pdf_path: str, start: int = 1, end: int = 10) -> list:
+        """Convert PDF to list of (page_num, image_bytes)"""
+        import concurrent.futures
         try:
             from pdf2image import convert_from_path
+            import io
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                pages = await loop.run_in_executor(
+                    pool,
+                    lambda: convert_from_path(pdf_path, first_page=start, last_page=min(end, 999))
+                )
             images = []
-            pages = convert_from_path(pdf_path, first_page=start, last_page=min(end, 999))
-            for i, img in enumerate(pages):
+            for i, page in enumerate(pages):
                 buf = io.BytesIO()
-                img.save(buf, format='JPEG', quality=85)
-                img_bytes = buf.getvalue()
-                if isinstance(img_bytes, tuple):
-                    img_bytes = img_bytes[0]
-                images.append((start + i, img_bytes))
-            # If no images (scanned PDF), try OCR text extraction
-
+                page.save(buf, format='JPEG', quality=85)
+                images.append((start + i, buf.getvalue()))
+            return images
+        except Exception as e:
+            logger.error(f"PDF to images error: {e}")
+            return []
+    
 # ============================================================
             return images
         except Exception as e:
@@ -271,7 +313,7 @@ class AsyncPDFExporter:
     async def get_browser(cls):
         if cls._browser is None:
             cls._playwright = await async_playwright().start()
-            cls._browser = await cls._playwright.chromium.launch(headless=True)
+            cls._browser = await cls._playwright.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--single-process"])
         return cls._browser
     
     @classmethod

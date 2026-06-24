@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(
 logger = logging.getLogger(__name__)
 
 TOKEN = "8672553290:AAGVPBir4iqGFi5NEQeIHd5-rYto82XQ4jU"
-DB_PATH = '/data/data/com.termux/files/home/AtlasMasterBot/data/atlas_bot.db'
+DB_PATH = "/data/atlas_bot.db"
 QUIZ_SESSIONS = {}
 
 async def start(update, context):

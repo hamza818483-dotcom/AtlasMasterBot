@@ -619,6 +619,8 @@ _asyncio.get_event_loop().create_task(setup_quiz_tables())
 # ============================================================
 import aiohttp
 
+async def sync_quiz_to_cloudflare(quiz_id, name, description, timer, shuffle, csv_text, tag, exp_footer):
+
     """Sync quiz to Cloudflare Worker"""
     try:
         async with aiohttp.ClientSession() as session:

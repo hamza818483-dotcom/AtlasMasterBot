@@ -12,7 +12,7 @@ import time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
-from config import db, gemini_manager
+from config import db, Config, gemini_manager, imgbb_manager, check_permitted
 from services import (
     generate_mcqs_from_image, generate_mcqs_from_text,
     mcqs_to_csv, parse_csv_to_mcqs, format_progress
@@ -123,6 +123,8 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /img HANDLER
 # ============================================================
 async def img_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_permitted(update.effective_user.id):
+        await update.message.reply_text("❌ আপনার এই feature ব্যবহারের অনুমতি নেই।"); return
     """Generate MCQs from image"""
     if not update.message.reply_to_message or not update.message.reply_to_message.photo:
         await update.message.reply_text("❌ ইমেজে reply করে `/img` বা `/img 15` বা `/img 15 টপিক` দাও")
@@ -149,18 +151,14 @@ async def img_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     image_bytes = await file.download_as_bytearray()
     if isinstance(image_bytes, bytearray):
         image_bytes = bytes(image_bytes)
-    
-    # Get active prompts from DB
-    await progress_msg.edit_text("⏳ Active Prompt চেক করা হচ্ছে...")
-    prompt_rows = await db.fetchall('SELECT content FROM prompts WHERE is_active = 1')
-    if not prompt_rows:
-        await progress_msg.edit_text("❌ কোনো Active Prompt নেই! `/prompt` দিয়ে Activate করো।")
-        return
-    
-    active_prompts = [row[0] for row in prompt_rows]
-    
-    # Generate MCQs
+    # IMG fixed prompt (no active prompt)
+    if count > 0:
+        instruction = f"Generate exactly {count} MCQs from this image. No more, no less."
+    else:
+        instruction = "Generate the HIGHEST POSSIBLE number of MCQs from this image. Extract every possible question from every line and fact. Maximum quantity with high quality."
+    active_prompts = [instruction]
     await progress_msg.edit_text(f"🤖 Gemini AI MCQ তৈরি করছে...\n📝 Target: {count}টি\n⏱️ অনুগ্রহ করে অপেক্ষা করো...")
+    # Generate MCQs
     
     try:
         mcqs = await generate_mcqs_from_image(image_bytes, active_prompts, count)
@@ -202,6 +200,8 @@ async def img_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /txt HANDLER
 # ============================================================
 async def txt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_permitted(update.effective_user.id):
+        await update.message.reply_text("❌ আপনার এই feature ব্যবহারের অনুমতি নেই।"); return
     """Generate MCQs from text"""
     # Get text
     text = None
@@ -229,16 +229,15 @@ async def txt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     progress_msg = await update.message.reply_text("⏳ MCQ তৈরি হচ্ছে...")
     
-    # Get active prompts
-    prompt_rows = await db.fetchall('SELECT content FROM prompts WHERE is_active = 1')
-    if not prompt_rows:
-        await progress_msg.edit_text("❌ কোনো Active Prompt নেই!")
-        return
-    
-    active_prompts = [row[0] for row in prompt_rows]
-    
+    # TXT fixed prompt
+    if count > 0:
+        instruction = f"Generate exactly {count} MCQs from this text. No more, no less."
+    else:
+        instruction = "Generate the HIGHEST POSSIBLE number of MCQs from this text. Use EVERY LINE as a source. Maximum quantity with high quality."
+
+    active_prompts = [f"{instruction}\nUse EVERY LINE as source. Do NOT create irrelevant questions.\nOutput ONLY valid JSON array:\n[{{\"question\":\"...\",\"options\":{{\"A\":\"...\",\"B\":\"...\",\"C\":\"...\",\"D\":\"...\"}},\"answer\":\"A/B/C/D\",\"explanation\":\"... (max 165 chars Bengali)\"}}]"]
+    await progress_msg.edit_text(f"🤖 Gemini AI MCQ তৈরি করছে...\n📝 Target: {count}টি")    
     # Generate MCQs
-    await progress_msg.edit_text(f"🤖 Gemini AI MCQ তৈরি করছে...\n📝 Target: {count}টি")
     
     try:
         mcqs = await generate_mcqs_from_text(text, active_prompts, count)
@@ -442,7 +441,7 @@ async def handle_mcq_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Handle MCQ edit callbacks"""
     query = update.callback_query
     data = query.data
-    mcqs = context.user_data.get('edit_mcqs', [])
+    mcqs = context.user_data.get('send_mcqs') or context.user_data.get('edit_mcqs') or context.user_data.get('last_mcqs', [])
     
     if not mcqs:
         await query.edit_message_text("❌ সেশন শেষ হয়ে গেছে। আবার /img বা /txt দাও।")
@@ -512,36 +511,7 @@ async def handle_mcq_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     elif data.startswith('ch_send_'):
         channel_id = data.replace('ch_send_', '')
-        mcqs = context.user_data.get('edit_mcqs', [])
-        topic = context.user_data.get('edit_topic', '')
-        if mcqs:
-            await query.edit_message_text(f"📤 {len(mcqs)}টি পোল পাঠানো শুরু...")
-            from csv_poll_handler import send_single_poll, get_pre_message, get_ending_message, get_message_link
-            bot = context.bot
-            pre_text = get_pre_message(topic, len(mcqs))
-            pre_msg = await bot.send_message(chat_id=channel_id, text=pre_text)
-            first_poll_id = None
-            sent = 0
-            for mcq in mcqs:
-                while context.user_data.get('paused', False):
-                    await asyncio.sleep(1)
-                import asyncio
-                poll_id, success = await send_single_poll(bot, channel_id, mcq, pre_msg.message_id)
-                if success and first_poll_id is None:
-                    first_poll_id = poll_id
-                if success:
-                    sent += 1
-                await asyncio.sleep(2)
-            first_link = await get_message_link(bot, channel_id, first_poll_id) if first_poll_id else ""
-            ending = get_ending_message(topic, sent, first_link)
-            await bot.send_message(chat_id=channel_id, text=ending, disable_web_page_preview=True)
-            await query.message.reply_text(f"✅ {sent}টি পোল পাঠানো সম্পন্ন!"  )
-        else:
-            await query.edit_message_text("❌ MCQ সেশন শেষ!")
-
-    elif data.startswith('ch_send_'):
-        channel_id = data.replace('ch_send_', '')
-        mcqs = context.user_data.get('edit_mcqs', [])
+        mcqs = context.user_data.get('send_mcqs') or context.user_data.get('edit_mcqs') or context.user_data.get('last_mcqs', [])
         topic = context.user_data.get('edit_topic', '')
         if not mcqs:
             csv_bytes = context.user_data.get('last_csv')
@@ -617,7 +587,7 @@ async def handle_prompt_callback(update: Update, context: ContextTypes.DEFAULT_T
         current = await db.fetchone('SELECT name, is_active FROM prompts WHERE id = ?', (pid,))
         if current:
             name = current[0]; new_state = 0 if current[1] else 1
-            await db.execute('UPDATE prompts SET is_active = ? WHERE id = ?', (new_state, pid))
+            db._client.table('prompts').update({'is_active': new_state}).eq('id', int(pid)).execute()
             await query.answer(text=f"✅ {name} {'Activated' if new_state else 'Deactivated'}!", show_alert=True)
     
     elif data.startswith('prompt_edit_'):
@@ -667,7 +637,7 @@ async def handle_edit_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Editing MCQ field
     if 'editing_field' in context.user_data:
         field, index = context.user_data['editing_field']
-        mcqs = context.user_data.get('edit_mcqs', [])
+        mcqs = context.user_data.get('send_mcqs') or context.user_data.get('edit_mcqs') or context.user_data.get('last_mcqs', [])
         
         if 0 <= index < len(mcqs):
             if field == 'question':
@@ -713,7 +683,7 @@ async def handle_edit_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Editing prompt content
     if 'editing_prompt' in context.user_data:
         pid = context.user_data['editing_prompt']
-        await db.execute('UPDATE prompts SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE (id = ? OR name = ?)', (text, pid, pid))
+        db._client.table('prompts').update({'content': text, 'updated_at': __import__('datetime').datetime.utcnow().isoformat()}).eq('id', int(pid)).execute()
         prompt_info = await db.fetchone('SELECT name FROM prompts WHERE id = ?', (pid,))
         pname = prompt_info[0] if prompt_info else 'Unknown'
         del context.user_data['editing_prompt']

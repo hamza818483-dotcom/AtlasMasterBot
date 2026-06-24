@@ -9,7 +9,7 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
-from config import db, Config
+from config import db, Config, check_permitted
 from services import parse_csv_to_mcqs
 
 def get_pre_message(topic: str, count: int) -> str:
@@ -69,16 +69,39 @@ async def get_explanation(mcq: dict) -> str:
     return explanation[:200] if explanation else None
 
 async def get_question_with_tags(question: str) -> str:
-    tags = await db.fetchall('SELECT tag_name, position FROM tag_settings WHERE is_active = 1')
-    result = question
-    for tag_name, position in tags:
-        if position == 'tag1': result = f"{tag_name}\n\n{result}"
-        elif position == 'tag2': result = f"{result}\n\n{tag_name}"
-        elif position == 'tag3': result = f"{result} {tag_name}"
-        elif position == 'tag4': result = f"{tag_name}\n{result}"
-    return result[:300]
+    res = db._client.table('tag_settings').select('tag_name, position').eq('is_active', 1).execute()
+    tags = res.data or []
 
+    tag_map = {}
+    for row in tags:
+        tag_map[row['position']] = row['tag_name']
 
+    # tag3: question এর শেষে inline
+    q = question
+    if 'tag3' in tag_map:
+        q = f"{q} {tag_map['tag3']}"
+
+    parts = []
+
+    # tag1: উপরে, blank line সহ (tag1\n\nquestion)
+    if 'tag1' in tag_map:
+        parts.append(tag_map['tag1'])
+        parts.append('')  # blank line
+
+    # tag4: উপরে, blank line ছাড়া (tag4\nquestion)
+    if 'tag4' in tag_map:
+        parts.append(tag_map['tag4'])
+        # NO blank line after tag4
+
+    # question
+    parts.append(q)
+
+    # tag2: নিচে, blank line সহ (\n\ntag2)
+    if 'tag2' in tag_map:
+        parts.append('')  # blank line
+        parts.append(tag_map['tag2'])
+
+    return '\n'.join(parts)[:300]
 def extract_image_url(text):
     """Extract first image URL from text with <img> tag"""
     if not text: return None, text
@@ -166,6 +189,8 @@ async def get_message_link(bot, chat_id: int, message_id: int) -> str:
 @nonblocking
 @nonblocking
 async def csv_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_permitted(update.effective_user.id):
+        await update.message.reply_text("❌ আপনার এই feature ব্যবহারের অনুমতি নেই।"); return
     user_id = update.effective_user.id
     is_admin = await db.fetchone('SELECT 1 FROM admins WHERE user_id = ?', (user_id,))
     if user_id != Config.OWNER_ID and not is_admin:
